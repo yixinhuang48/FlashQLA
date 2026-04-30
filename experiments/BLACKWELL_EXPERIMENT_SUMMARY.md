@@ -173,6 +173,39 @@ This is not a final speedup yet, but it is a cleaner decomposition for the next
 kernel port: replace only the output-only step with a Blackwell/TileLang kernel,
 while preserving the already-correct QLA state generation.
 
+An experimental fixed-length TileLang output-only kernel has been added behind
+`FLASHQLA_BLACKWELL_TILELANG_OUTPUT=1`. It consumes QLA `h + v_new` directly and
+matches the correctness gate (`o_qla: 0.0015 / 0.3597` on `blackwell_smoke`),
+but it is not enabled by default because the first simple implementation is
+still slower than FLA's Triton output-only kernel:
+
+| Output-only route for QLA `output_h=True` | ms |
+| --- | ---: |
+| FLA `chunk_fwd_o` default | 0.829 |
+| Experimental TileLang output kernel | 0.833 |
+
+The first TileLang output kernel is correctness-valid and near the FLA
+output-only fallback for this case. Tuning `block_DV` showed `128` remains best
+(`block_DV=64` was about `0.866 ms`; `block_DV=32` was about `0.935 ms` for the
+full `output_h=True` path). Varying CTA threads between 128/256/512 had little
+impact.
+
+Component timing for `B=1, T=8192, H=16, K=V=128`:
+
+| Component | ms |
+| --- | ---: |
+| QLA cumsum | 0.008 |
+| QLA KKT solve | 0.035 |
+| QLA state + `v_new` | 0.729 |
+| TileLang output-only | 0.075 |
+| FLA output-only | 0.072 |
+
+This shows the next major kernel target is not output-only anymore; it is the
+QLA state/`v_new` section of `fused_gdr_fwd`. A direct attempt to conditionally
+skip the unused output math inside that fused kernel hit TileLang layout
+inference limits, so the cleaner next step is a dedicated state+`v_new` kernel
+for the Blackwell safe path.
+
 ## Blackwell Architecture Direction
 
 TileLang 0.1.8 is already targeting `sm_100a`, and it exposes Blackwell `tcgen05` primitives. FlashQLA, however, is written around `T.gemm_v1` calls in the Hopper backend. The likely path to significant B200 speedup over the H200 reference is not another host-side heuristic; it is a real forward-kernel port that replaces the Hopper WGMMA-style GEMM use with a Blackwell-aware `tcgen05`/new TileLang GEMM path and revalidates numerics from the reference tests.

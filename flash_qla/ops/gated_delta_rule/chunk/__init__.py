@@ -38,6 +38,18 @@ def _use_blackwell_experimental_hopper_fwd() -> bool:
     )
 
 
+def _use_blackwell_tilelang_output() -> bool:
+    import os
+
+    return os.getenv("FLASHQLA_BLACKWELL_TILELANG_OUTPUT") in (
+        "1",
+        "true",
+        "True",
+        "yes",
+        "on",
+    )
+
+
 def _is_single_full_sequence(
     cu_seqlens: torch.LongTensor | None,
     num_tokens: int,
@@ -149,6 +161,19 @@ def _fla_chunk_output_fwd(
         scale=scale,
         cu_seqlens=cu_seqlens,
     )
+
+
+def _tilelang_chunk_output_fwd(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v_new: torch.Tensor,
+    h: torch.Tensor,
+    g: torch.Tensor,
+    scale: float,
+) -> torch.Tensor:
+    from .hopper.output_fwd import chunk_gdr_output
+
+    return chunk_gdr_output(q=q, k=k, v=v_new, h=h, g=g, scale=scale)
 
 
 def _torch_output_fwd(
@@ -367,15 +392,25 @@ def chunk_gated_delta_rule_fwd(
     if not use_experimental_hopper_fwd:
         if cu_seqlens is None:
             if use_qla_v_new_output:
-                o = _fla_chunk_output_fwd(
-                    q=q,
-                    k=k,
-                    v_new=o,
-                    h=h,
-                    g=g,
-                    scale=scale,
-                    cu_seqlens=None,
-                )
+                if _use_blackwell_tilelang_output():
+                    o = _tilelang_chunk_output_fwd(
+                        q=q,
+                        k=k,
+                        v_new=o,
+                        h=h,
+                        g=g,
+                        scale=scale,
+                    )
+                else:
+                    o = _fla_chunk_output_fwd(
+                        q=q,
+                        k=k,
+                        v_new=o,
+                        h=h,
+                        g=g,
+                        scale=scale,
+                        cu_seqlens=None,
+                    )
             else:
                 o = blackwell_safe_o
         else:
