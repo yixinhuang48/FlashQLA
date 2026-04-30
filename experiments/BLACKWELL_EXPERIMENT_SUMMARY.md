@@ -231,6 +231,26 @@ valid but essentially neutral in latency (`0.0372 ms` default versus
 `prepare_h` but fails later launching `fused_bwd` with a dynamic shared-memory
 limit (`233984` bytes), so backward needs a separate Blackwell resource pass.
 
+Follow-up backward resource experiments on B200:
+
+- Device limits are `shared_memory_per_block_optin=232448` bytes and
+  `shared_memory_per_multiprocessor=233472` bytes, so the original fused
+  backward kernel is only 1536 bytes over the per-block opt-in limit.
+- Enabling TileLang aggressive shared-memory merge did not reduce the requested
+  dynamic shared size; launch still requested 233984 bytes.
+- Removing/replacing the full `tmp_shared_1_3` 64x64 bf16 scratch allows the
+  kernel to launch, but the quick rewrites tested so far are not numerically
+  valid:
+  - Reusing `tmp_shared_1_2` for the db transpose/reduction launches but
+    corrupts all gradients.
+  - A direct `dim=0` register reduction fails TileLang layout inference.
+  - A 16x64 swizzled tile and a 64x16 linear tile both launch but corrupt
+    gradients and emit layout/bounds warnings.
+
+The safest next backward direction is a deliberate reschedule of the db
+transpose/reduction or a split backward kernel, not another opportunistic shared
+buffer reuse.
+
 ## Blackwell Architecture Direction
 
 TileLang 0.1.8 is already targeting `sm_100a`, and it exposes Blackwell `tcgen05` primitives. FlashQLA originally pinned the Hopper backend to `T.gemm_v1`; the current branch now lets TileLang select the generic GEMM lowering in the correctness-safe forward and `prepare_h` paths. The likely path to more B200 speedup over the H200 reference is still not another host-side heuristic; it is a real forward-kernel port that removes unused output work and eventually replaces the Hopper WGMMA-style schedule with a Blackwell-aware `tcgen05`/new TileLang GEMM layout while revalidating numerics from the reference tests.
