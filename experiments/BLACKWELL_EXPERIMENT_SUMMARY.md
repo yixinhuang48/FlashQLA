@@ -240,6 +240,10 @@ Follow-up backward resource experiments on B200:
   dynamic shared size; launch still requested 233984 bytes.
 - Disabling TileLang safe-memory access and TMA lowering also did not reduce the
   requested dynamic shared size; launch still requested 233984 bytes.
+- Replacing all backward `T.gemm_v1` calls with generic `T.gemm` changed the
+  lowering and reduced the requested dynamic shared size from 233984 bytes to
+  233472 bytes. That is progress, but still 1024 bytes above B200's per-block
+  opt-in limit, so it still fails at launch.
 - A correctness fallback through FLA backward is not currently viable for QLA
   smoke tests. With QLA forward intermediates, FLA backward has gate-scaling
   mismatches; with FLA-recomputed intermediates, `dq/dk/dv/db` are within the
@@ -256,6 +260,11 @@ Follow-up backward resource experiments on B200:
     mapping.
   - A 16x64 swizzled tile and a 64x16 linear tile both launch but corrupt
     gradients and emit layout/bounds warnings.
+- Removing the tiny shared buffers for cached gate exponentials and recomputing
+  `exp2` at use sites did not lower the dynamic shared request below 233472
+  bytes. Staging `h` in bf16 shared memory also did not change that request in a
+  fresh compile, so the remaining 1024-byte excess is likely tied to the
+  compiler's async/barrier/shared layout rather than those obvious data tiles.
 
 The safest next backward direction is a deliberate reschedule of the db
 transpose/reduction or a split backward kernel, not another opportunistic shared
