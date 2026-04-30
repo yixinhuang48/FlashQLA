@@ -129,6 +129,28 @@ def _fla_fwd(
     )
 
 
+def _fla_chunk_output_fwd(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v_new: torch.Tensor,
+    h: torch.Tensor,
+    g: torch.Tensor,
+    scale: float,
+    cu_seqlens: torch.LongTensor | None,
+) -> torch.Tensor:
+    from fla.ops.common.chunk_o import chunk_fwd_o
+
+    return chunk_fwd_o(
+        q=q,
+        k=k,
+        v=v_new,
+        h=h,
+        g=g,
+        scale=scale,
+        cu_seqlens=cu_seqlens,
+    )
+
+
 def _torch_output_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -304,8 +326,14 @@ def chunk_gated_delta_rule_fwd(
             )
         )
     blackwell_safe_o = None
+    use_qla_v_new_output = (
+        is_blackwell
+        and not use_experimental_hopper_fwd
+        and output_h
+        and cu_seqlens is None
+    )
     if not use_experimental_hopper_fwd and cu_seqlens is None:
-        blackwell_safe_o = _fla_output_fwd(
+        blackwell_safe_o = None if use_qla_v_new_output else _fla_output_fwd(
             q=q,
             k=k,
             v=v,
@@ -331,13 +359,25 @@ def chunk_gated_delta_rule_fwd(
         output_final_state=output_final_state,
         output_h=internal_output_h,
         output_o=use_experimental_hopper_fwd,
+        output_v_new=use_qla_v_new_output,
         cu_seqlens=cu_seqlens,
         cp_seq_map=cp_seq_map,
         raw_cu_seqlens=raw_cu_seqlens,
     )
     if not use_experimental_hopper_fwd:
         if cu_seqlens is None:
-            o = blackwell_safe_o
+            if use_qla_v_new_output:
+                o = _fla_chunk_output_fwd(
+                    q=q,
+                    k=k,
+                    v_new=o,
+                    h=h,
+                    g=g,
+                    scale=scale,
+                    cu_seqlens=None,
+                )
+            else:
+                o = blackwell_safe_o
         else:
             o = _torch_output_fwd(
                 q=q,

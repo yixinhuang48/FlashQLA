@@ -153,6 +153,26 @@ creates non-finite `h` and `output`. This localizes the remaining CP correctness
 problem to the CP-enabled `fused_gdr_fwd` kernel body, not the host-side CP split
 or `correct_initial_states` preprocessing.
 
+## Output-Kernel Boundary Experiment
+
+The sm100 safe path now has an intermediate kernel-level route for fixed-length
+calls that request `output_h=True`: QLA's TileLang fused forward can emit its
+computed `v_new`, and FLA's output-only `chunk_fwd_o` consumes QLA `h` + `v_new`
+instead of recomputing the entire FLA forward. This keeps the known-good QLA
+state path and avoids using the numerically broken Hopper-derived output body.
+
+Representative B200 microbenchmark for `B=1, T=8192, H=16, K=V=128`:
+
+| Path | ms |
+| --- | ---: |
+| QLA `output_h=True` with QLA `v_new` + output-only kernel | 0.827 |
+| QLA/FLA fast `output_h=False` path | 0.362 |
+| FLA full forward | 0.362 |
+
+This is not a final speedup yet, but it is a cleaner decomposition for the next
+kernel port: replace only the output-only step with a Blackwell/TileLang kernel,
+while preserving the already-correct QLA state generation.
+
 ## Blackwell Architecture Direction
 
 TileLang 0.1.8 is already targeting `sm_100a`, and it exposes Blackwell `tcgen05` primitives. FlashQLA, however, is written around `T.gemm_v1` calls in the Hopper backend. The likely path to significant B200 speedup over the H200 reference is not another host-side heuristic; it is a real forward-kernel port that replaces the Hopper WGMMA-style GEMM use with a Blackwell-aware `tcgen05`/new TileLang GEMM path and revalidates numerics from the reference tests.

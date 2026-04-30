@@ -38,6 +38,7 @@ def tilelang_fused_chunk_gdr_fwd(
     store_final_state,
     store_h,
     store_o,
+    store_v_new,
     is_varlen,
     is_cp,
     block_DV=128,
@@ -275,6 +276,18 @@ def tilelang_fused_chunk_gdr_fwd(
                     )
                     # S2[2] Vd
                     T.copy(v_fragment, vd_shared)
+                    if store_v_new:
+                        T.copy(
+                            v_fragment,
+                            o[
+                                batch_idx,
+                                seq_start_idx
+                                + i_s * block_S : seq_start_idx
+                                + (i_s + 1) * block_S,
+                                bh,
+                                bv * block_DV : (bv + 1) * block_DV,
+                            ],
+                        )
                     T.barrier_arrive(bar_4)
 
                     # [STAGE 0] 4
@@ -543,6 +556,7 @@ def fused_gdr_fwd(
     output_final_state: bool = True,
     output_h: bool = False,
     output_o: bool = True,
+    output_v_new: bool = False,
     cu_seqlens: torch.LongTensor | None = None,
     cp_seq_map: torch.LongTensor | None = None,
     raw_cu_seqlens: torch.LongTensor | None = None,
@@ -631,6 +645,7 @@ def fused_gdr_fwd(
         store_final_state=output_final_state,
         store_h=output_h,
         store_o=output_o,
+        store_v_new=output_v_new,
         is_varlen=is_varlen,
         is_cp=is_cp,
         block_DV=block_DV,
@@ -656,7 +671,7 @@ def fused_gdr_fwd(
         final_state = None
     if not output_h:
         h = None
-    if not output_o:
+    if not output_o and not output_v_new:
         o = None
 
     return o, h, final_state
