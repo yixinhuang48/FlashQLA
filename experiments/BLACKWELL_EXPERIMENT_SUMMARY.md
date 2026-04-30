@@ -27,7 +27,8 @@ Compared focused B200/sm100 tuning variants for FlashQLA forward. Lower `qla_ms`
 
 ## Correctness Caveat
 
-A targeted FlashQLA correctness smoke test was run after the tuning probes:
+The original Hopper-derived sm100 path failed a targeted FlashQLA correctness
+smoke test after the tuning probes:
 
 ```bash
 cd /home/yih119/FlashQLA/tests
@@ -40,7 +41,55 @@ Results:
 - Auto-CP path produced `nan` in `h_qla`, `s_qla`, and `o_qla` for `B=1, T=8192, Hk=16, Hv=16`.
 - Non-CP path avoided NaNs but still failed output accuracy: `o_qla` max error was about `0.316 / 0.360`, far above the 2% threshold.
 
-This means the current B200/sm100 FlashQLA path should not be treated as numerically valid. The latency experiments are useful for diagnosis, but they are not publishable performance results.
+This means the original B200/sm100 FlashQLA path should not be treated as
+numerically valid. The latency experiments are useful for diagnosis, but they
+are not publishable performance results.
+
+## Correctness-First Blackwell Route
+
+The `blackwell-experiments` branch now routes sm100 forward calls through an
+explicit safe path by default:
+
+- Hopper/sm90 keeps the original fused QLA behavior.
+- Blackwell/sm100 still uses QLA `chunk_local_cumsum`, `kkt_solve`, and the
+  state path, but it disables the broken auto-CP preprocessing and replaces the
+  broken Hopper-derived output projection with FLA's known-correct output path.
+- Set `FLASHQLA_BLACKWELL_EXPERIMENTAL_HOPPER_FWD=1` to re-enable the original
+  Hopper-derived fused output and CP path for diagnosis.
+
+Validated on B200:
+
+```bash
+cd /home/yih119/FlashQLA
+source .venv/bin/activate
+TMPDIR=/home/yih119/FlashQLA/.tmp TILELANG_CLEANUP_TEMP_FILES=1 \
+CUDA_VISIBLE_DEVICES=0 python tests/test_gdr.py \
+  --set blackwell_smoke --num-heads 16 --skip-bwd --hide-lat --ref-dtype float32
+```
+
+Result: fixed-length forward smoke passes. The representative output error
+changed from roughly `0.311 / 0.360` to `0.0015 / 0.360`.
+
+The new diagnostic harness:
+
+```bash
+TMPDIR=/home/yih119/FlashQLA/.tmp TILELANG_CLEANUP_TEMP_FILES=1 \
+CUDA_VISIBLE_DEVICES=0 python experiments/blackwell_correctness_probe.py \
+  --num-tokens 8192 --num-heads 16 --mode both --inspect-cp
+```
+
+Key probe finding: CP preprocessing is the first non-finite source. `CP h0`
+contains non-finite values on B200, and the experimental Hopper-derived fused
+path then propagates those values into `h` and `output`. The safe path remains
+finite and within the existing fixed-length smoke thresholds.
+
+Remaining correctness work:
+
+- Fragmented varlen remains unsafe on sm100. The varlen state kernel appears to
+  corrupt inputs across repeated calls, so the safe output fallback alone is not
+  enough for a strict varlen gate.
+- The added `blackwell_varlen_smoke` and `blackwell_cp_long_smoke` presets are
+  scaffolding for the next gates, not completed green gates yet.
 
 ## Blackwell Architecture Direction
 

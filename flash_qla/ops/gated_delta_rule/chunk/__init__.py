@@ -14,6 +14,53 @@ else:
 from .cp_context import intra_card_cp_preprocess
 
 
+def _is_blackwell_or_newer(x: torch.Tensor) -> bool:
+    if not x.is_cuda:
+        return False
+    return torch.cuda.get_device_properties(x.device).major >= 10
+
+
+def _use_blackwell_experimental_hopper_fwd() -> bool:
+    import os
+
+    return os.getenv("FLASHQLA_BLACKWELL_EXPERIMENTAL_HOPPER_FWD") in (
+        "1",
+        "true",
+        "True",
+        "yes",
+        "on",
+    )
+
+
+def _fla_output_fwd(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    scale: float,
+    initial_state: torch.Tensor | None,
+    output_final_state: bool,
+    cu_seqlens: torch.LongTensor | None,
+) -> torch.Tensor:
+    from fla.ops.gated_delta_rule.chunk import (
+        chunk_gated_delta_rule_fwd as fla_chunk_gated_delta_rule_fwd,
+    )
+
+    _, o, _, _, _, _ = fla_chunk_gated_delta_rule_fwd(
+        q=q,
+        k=k,
+        v=v,
+        g=g,
+        beta=beta,
+        scale=scale,
+        initial_state=initial_state,
+        output_final_state=output_final_state,
+        cu_seqlens=cu_seqlens,
+    )
+    return o
+
+
 def chunk_gated_delta_rule_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -27,7 +74,14 @@ def chunk_gated_delta_rule_fwd(
     output_h: bool = False,
     auto_cp: bool = True,
 ):
-    g = chunk_local_cumsum(g, chunk_size=64, cu_seqlens=cu_seqlens)
+    raw_g = g
+    scale = scale or q.shape[-1] ** (-0.5)
+    is_blackwell = _is_blackwell_or_newer(q)
+    use_experimental_hopper_fwd = (
+        not is_blackwell or _use_blackwell_experimental_hopper_fwd()
+    )
+
+    g = chunk_local_cumsum(raw_g, chunk_size=64, cu_seqlens=cu_seqlens)
     A = kkt_solve(
         k=k,
         b=beta,
@@ -35,7 +89,7 @@ def chunk_gated_delta_rule_fwd(
     )
     cp_seq_map = None
     raw_cu_seqlens = None
-    if auto_cp:
+    if auto_cp and use_experimental_hopper_fwd:
         initial_state, cu_seqlens, cp_seq_map, raw_cu_seqlens = (
             intra_card_cp_preprocess(
                 k=k,
@@ -46,6 +100,19 @@ def chunk_gated_delta_rule_fwd(
                 raw_h0=initial_state,
                 raw_cu_seqlens=cu_seqlens,
             )
+        )
+    blackwell_safe_o = None
+    if not use_experimental_hopper_fwd:
+        blackwell_safe_o = _fla_output_fwd(
+            q=q,
+            k=k,
+            v=v,
+            g=raw_g,
+            beta=beta,
+            scale=scale,
+            initial_state=initial_state,
+            output_final_state=output_final_state,
+            cu_seqlens=cu_seqlens,
         )
     o, h, final_state = fused_gdr_fwd(
         q=q,
@@ -58,11 +125,13 @@ def chunk_gated_delta_rule_fwd(
         initial_state=initial_state,
         output_final_state=output_final_state,
         output_h=output_h,
-        output_o=True,
+        output_o=use_experimental_hopper_fwd,
         cu_seqlens=cu_seqlens,
         cp_seq_map=cp_seq_map,
         raw_cu_seqlens=raw_cu_seqlens,
     )
+    if not use_experimental_hopper_fwd:
+        o = blackwell_safe_o
     return g, A, o, h, final_state
 
 
