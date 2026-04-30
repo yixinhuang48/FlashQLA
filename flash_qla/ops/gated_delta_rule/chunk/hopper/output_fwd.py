@@ -159,7 +159,7 @@ def chunk_gdr_output(
 
     o = torch.empty_like(v)
     block_DV = int(os.getenv("FLASHQLA_BLACKWELL_OUTPUT_BLOCK_DV", "128"))
-    num_threads = int(os.getenv("FLASHQLA_BLACKWELL_OUTPUT_THREADS", "256"))
+    num_threads = int(os.getenv("FLASHQLA_BLACKWELL_OUTPUT_THREADS", "128"))
     kernel = tilelang_chunk_gdr_output(
         H,
         Hg,

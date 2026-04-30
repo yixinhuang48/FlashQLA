@@ -317,10 +317,10 @@ def chunk_gated_delta_rule_fwd(
                 v=dense_v,
                 g=dense_g,
                 beta=dense_beta,
-            scale=scale,
-            initial_state=initial_state,
-            output_final_state=output_final_state,
-            cu_seqlens=None,
+                scale=scale,
+                initial_state=initial_state,
+                output_final_state=output_final_state,
+                cu_seqlens=None,
             )
             return (
                 _pack_uniform_varlen(fla_g),

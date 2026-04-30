@@ -187,8 +187,16 @@ still slower than FLA's Triton output-only kernel:
 The first TileLang output kernel is correctness-valid and near the FLA
 output-only fallback for this case. Tuning `block_DV` showed `128` remains best
 (`block_DV=64` was about `0.866 ms`; `block_DV=32` was about `0.935 ms` for the
-full `output_h=True` path). Varying CTA threads between 128/256/512 had little
-impact.
+full `output_h=True` path). A follow-up CTA thread sweep found 128 threads is
+the best opt-in default for the TileLang output kernel (`~0.822 ms` in the best
+run versus `~0.831 ms` for 256/512), though repeated full-path measurements show
+this is still too small and noisy to make the TileLang output kernel the default
+over the FLA output-only fallback.
+
+I also tested a faster-looking direct `cu_seqlens` FLA route for Blackwell
+`output_h=False` varlen cases. It removes uniform-varlen unpack/repack overhead,
+but it fails the repeated QLA correctness loop on fragmented and uniform varlen
+cases, so it is intentionally not used.
 
 Component timing for `B=1, T=8192, H=16, K=V=128`:
 
