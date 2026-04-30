@@ -57,6 +57,21 @@ def _is_uniform_varlen(cu_seqlens: torch.LongTensor | None) -> bool:
     return bool(torch.all(lengths == lengths[0]).item())
 
 
+def _uniform_varlen_shape(cu_seqlens: torch.LongTensor) -> tuple[int, int]:
+    num_seqs = cu_seqlens.numel() - 1
+    seq_len = (cu_seqlens[1] - cu_seqlens[0]).item()
+    return num_seqs, seq_len
+
+
+def _unpack_uniform_varlen(x: torch.Tensor, cu_seqlens: torch.LongTensor) -> torch.Tensor:
+    num_seqs, seq_len = _uniform_varlen_shape(cu_seqlens)
+    return x.reshape(num_seqs, seq_len, *x.shape[2:])
+
+
+def _pack_uniform_varlen(x: torch.Tensor) -> torch.Tensor:
+    return x.reshape(1, x.shape[0] * x.shape[1], *x.shape[2:])
+
+
 def _fla_output_fwd(
     q: torch.Tensor,
     k: torch.Tensor,
@@ -244,11 +259,11 @@ def chunk_gated_delta_rule_fwd(
             )
             return fla_g, fla_A, fla_o, None, fla_final_state
         if _is_uniform_varlen(cu_seqlens):
-            dense_q = unpack(q, cu_seqlens)
-            dense_k = unpack(k, cu_seqlens)
-            dense_v = unpack(v, cu_seqlens)
-            dense_g = unpack(raw_g, cu_seqlens)
-            dense_beta = unpack(beta, cu_seqlens)
+            dense_q = _unpack_uniform_varlen(q, cu_seqlens)
+            dense_k = _unpack_uniform_varlen(k, cu_seqlens)
+            dense_v = _unpack_uniform_varlen(v, cu_seqlens)
+            dense_g = _unpack_uniform_varlen(raw_g, cu_seqlens)
+            dense_beta = _unpack_uniform_varlen(beta, cu_seqlens)
             fla_g, fla_o, fla_A, fla_final_state, _, _ = _fla_fwd(
                 q=dense_q,
                 k=dense_k,
@@ -261,9 +276,9 @@ def chunk_gated_delta_rule_fwd(
             cu_seqlens=None,
             )
             return (
-                pack(fla_g, cu_seqlens),
-                pack(fla_A, cu_seqlens),
-                pack(fla_o, cu_seqlens),
+                _pack_uniform_varlen(fla_g),
+                _pack_uniform_varlen(fla_A),
+                _pack_uniform_varlen(fla_o),
                 None,
                 fla_final_state,
             )

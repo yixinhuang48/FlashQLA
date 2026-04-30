@@ -116,33 +116,42 @@ Remaining correctness/performance work:
 
 ## Valid Safe-Path Performance Snapshot
 
-After adding single-full-sequence normalization and uniform-varlen densification,
-the correctness-valid safe path recovered much of the fallback overhead. Focused
-B200 probe command:
+After adding single-full-sequence normalization, uniform-varlen densification,
+and view-based reshape/pack for uniform varlen, the correctness-valid safe path
+recovered most of the fallback overhead. Focused B200 probe command:
 
 ```bash
 TMPDIR=/home/yih119/FlashQLA/.tmp TILELANG_CLEANUP_TEMP_FILES=1 \
-FLASHQLA_PROBE_WARMUP=3 FLASHQLA_PROBE_REPEATS=10 \
+FLASHQLA_PROBE_WARMUP=5 FLASHQLA_PROBE_REPEATS=30 \
 CUDA_VISIBLE_DEVICES=0 python experiments/blackwell_tune_probe.py
 ```
 
 | Case | QLA safe ms | FLA ms | FLA/QLA |
 | --- | ---: | ---: | ---: |
-| tp8_1x32768 | 1.122 | 1.027 | 0.916 |
-| tp8_8192x4 | 1.973 | 0.478 | 0.242 |
-| tp4_1x32768 | 1.350 | 1.289 | 0.955 |
-| tp4_4096x8 | 3.647 | 0.925 | 0.254 |
-| tp2_1x32768 | 1.847 | 1.815 | 0.982 |
-| tp2_4096x8 | 4.516 | 1.741 | 0.385 |
-| tp1_1x32768 | 3.141 | 3.125 | 0.995 |
-| tp1_4096x8 | 6.153 | 3.033 | 0.493 |
-| h48_1x32768 | 2.626 | 2.560 | 0.975 |
-| h16_1x32768 | 1.395 | 1.324 | 0.949 |
+| tp8_1x32768 | 1.121 | 1.031 | 0.920 |
+| tp8_8192x4 | 0.683 | 0.479 | 0.701 |
+| tp4_1x32768 | 1.345 | 1.289 | 0.959 |
+| tp4_4096x8 | 1.097 | 0.924 | 0.842 |
+| tp2_1x32768 | 1.842 | 1.814 | 0.985 |
+| tp2_4096x8 | 1.868 | 1.738 | 0.931 |
+| tp1_1x32768 | 3.141 | 3.132 | 0.997 |
+| tp1_4096x8 | 3.120 | 3.034 | 0.973 |
+| h48_1x32768 | 2.626 | 2.561 | 0.975 |
+| h16_1x32768 | 1.392 | 1.323 | 0.951 |
 
 Compared with the first correctness-safe probe, uniform multi-sequence cases are
 now much faster; for example `tp1_4096x8` improved from about `56.8 ms` to
-`6.15 ms`. These are valid B200 numbers, but they are not yet speedups over FLA
-or the repo H200 reference.
+`3.12 ms`, and `tp2_4096x8` improved from about `30.5 ms` to `1.87 ms`. These
+are valid B200 numbers, but they are still near-parity rather than speedups over
+FLA or the repo H200 reference.
+
+## Latest CP/Experimental Kernel Finding
+
+Rechecking the CP path showed that CP preprocessing itself can now produce
+finite `CP h0` on B200, but enabling the Hopper-derived CP fused forward still
+creates non-finite `h` and `output`. This localizes the remaining CP correctness
+problem to the CP-enabled `fused_gdr_fwd` kernel body, not the host-side CP split
+or `correct_initial_states` preprocessing.
 
 ## Blackwell Architecture Direction
 
