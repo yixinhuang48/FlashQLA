@@ -28,7 +28,7 @@ from flash_qla.ops.gated_delta_rule.chunk.cp_context import (  # noqa: E402
 )
 from flash_qla.ops.gated_delta_rule.chunk.hopper import kkt_solve  # noqa: E402
 from flash_qla.ops.utils import chunk_local_cumsum  # noqa: E402
-from flash_qla.utils import l2norm, pack  # noqa: E402
+from flash_qla.utils import l2norm  # noqa: E402
 
 
 def tensor_report(name: str, got: torch.Tensor | None, ref: torch.Tensor | None = None):
@@ -108,11 +108,6 @@ def make_inputs(args: argparse.Namespace):
             device="cuda",
             dtype=torch.int32,
         )
-        q = pack(q, cu_seqlens)
-        k = pack(k, cu_seqlens)
-        v = pack(v, cu_seqlens)
-        g = pack(g, cu_seqlens)
-        beta = pack(beta, cu_seqlens)
         if h0 is not None:
             h0 = torch.randn(
                 (cu_seqlens.numel() - 1, args.num_heads, args.head_dim, args.head_dim),

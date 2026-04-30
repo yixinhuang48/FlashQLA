@@ -51,9 +51,16 @@ The `blackwell-experiments` branch now routes sm100 forward calls through an
 explicit safe path by default:
 
 - Hopper/sm90 keeps the original fused QLA behavior.
-- Blackwell/sm100 still uses QLA `chunk_local_cumsum`, `kkt_solve`, and the
-  state path, but it disables the broken auto-CP preprocessing and replaces the
-  broken Hopper-derived output projection with FLA's known-correct output path.
+- Blackwell/sm100 disables the broken auto-CP preprocessing by default.
+- Fixed-length and uniform-varlen benchmark-style calls with `output_h=False`
+  use FLA's forward path directly and pack results back when needed. This keeps
+  these common paths correctness-valid without duplicating the broken sm100
+  Hopper-derived output kernel.
+- Calls that need `output_h=True` still use QLA `chunk_local_cumsum`,
+  `kkt_solve`, and state generation, while replacing the broken output
+  projection with a safe fallback.
+- Fragmented varlen uses a conservative PyTorch/fp32 output fallback from QLA's
+  state and a recomputed fp32 `A`. This is a correctness path, not a speed path.
 - Set `FLASHQLA_BLACKWELL_EXPERIMENTAL_HOPPER_FWD=1` to re-enable the original
   Hopper-derived fused output and CP path for diagnosis.
 
@@ -70,6 +77,23 @@ CUDA_VISIBLE_DEVICES=0 python tests/test_gdr.py \
 Result: fixed-length forward smoke passes. The representative output error
 changed from roughly `0.311 / 0.360` to `0.0015 / 0.360`.
 
+Additional B200 correctness gates now pass:
+
+```bash
+TMPDIR=/home/yih119/FlashQLA/.tmp TILELANG_CLEANUP_TEMP_FILES=1 \
+CUDA_VISIBLE_DEVICES=0 python tests/test_gdr.py \
+  --set blackwell_varlen_smoke --num-heads 16 --skip-bwd --hide-lat --ref-dtype float32
+
+TMPDIR=/home/yih119/FlashQLA/.tmp TILELANG_CLEANUP_TEMP_FILES=1 \
+CUDA_VISIBLE_DEVICES=0 python tests/test_gdr.py \
+  --set blackwell_cp_long_smoke --num-heads 16 --skip-bwd --hide-lat --ref-dtype float32
+```
+
+Representative results:
+
+- Fragmented varlen: `o_qla: 0.0013 / 0.4253`
+- Long fixed-length: `o_qla: 0.0016 / 0.3649`
+
 The new diagnostic harness:
 
 ```bash
@@ -83,13 +107,42 @@ contains non-finite values on B200, and the experimental Hopper-derived fused
 path then propagates those values into `h` and `output`. The safe path remains
 finite and within the existing fixed-length smoke thresholds.
 
-Remaining correctness work:
+Remaining correctness/performance work:
 
-- Fragmented varlen remains unsafe on sm100. The varlen state kernel appears to
-  corrupt inputs across repeated calls, so the safe output fallback alone is not
-  enough for a strict varlen gate.
-- The added `blackwell_varlen_smoke` and `blackwell_cp_long_smoke` presets are
-  scaffolding for the next gates, not completed green gates yet.
+- The original Hopper-derived sm100 output and CP path remains unsafe and is
+  still diagnostic-only.
+- Fragmented varlen is correctness-valid through the conservative fallback but
+  slow. It still needs a real Blackwell output kernel.
+
+## Valid Safe-Path Performance Snapshot
+
+After adding single-full-sequence normalization and uniform-varlen densification,
+the correctness-valid safe path recovered much of the fallback overhead. Focused
+B200 probe command:
+
+```bash
+TMPDIR=/home/yih119/FlashQLA/.tmp TILELANG_CLEANUP_TEMP_FILES=1 \
+FLASHQLA_PROBE_WARMUP=3 FLASHQLA_PROBE_REPEATS=10 \
+CUDA_VISIBLE_DEVICES=0 python experiments/blackwell_tune_probe.py
+```
+
+| Case | QLA safe ms | FLA ms | FLA/QLA |
+| --- | ---: | ---: | ---: |
+| tp8_1x32768 | 1.122 | 1.027 | 0.916 |
+| tp8_8192x4 | 1.973 | 0.478 | 0.242 |
+| tp4_1x32768 | 1.350 | 1.289 | 0.955 |
+| tp4_4096x8 | 3.647 | 0.925 | 0.254 |
+| tp2_1x32768 | 1.847 | 1.815 | 0.982 |
+| tp2_4096x8 | 4.516 | 1.741 | 0.385 |
+| tp1_1x32768 | 3.141 | 3.125 | 0.995 |
+| tp1_4096x8 | 6.153 | 3.033 | 0.493 |
+| h48_1x32768 | 2.626 | 2.560 | 0.975 |
+| h16_1x32768 | 1.395 | 1.324 | 0.949 |
+
+Compared with the first correctness-safe probe, uniform multi-sequence cases are
+now much faster; for example `tp1_4096x8` improved from about `56.8 ms` to
+`6.15 ms`. These are valid B200 numbers, but they are not yet speedups over FLA
+or the repo H200 reference.
 
 ## Blackwell Architecture Direction
 
