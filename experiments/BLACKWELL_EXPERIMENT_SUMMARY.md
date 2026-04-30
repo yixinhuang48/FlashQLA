@@ -238,18 +238,36 @@ Follow-up backward resource experiments on B200:
   backward kernel is only 1536 bytes over the per-block opt-in limit.
 - Enabling TileLang aggressive shared-memory merge did not reduce the requested
   dynamic shared size; launch still requested 233984 bytes.
+- Disabling TileLang safe-memory access and TMA lowering also did not reduce the
+  requested dynamic shared size; launch still requested 233984 bytes.
+- A correctness fallback through FLA backward is not currently viable for QLA
+  smoke tests. With QLA forward intermediates, FLA backward has gate-scaling
+  mismatches; with FLA-recomputed intermediates, `dq/dk/dv/db` are within the
+  2% reference threshold but `dg` remains outside it, so returning FLA `dg`
+  would still fail the QLA backward gate.
 - Removing/replacing the full `tmp_shared_1_3` 64x64 bf16 scratch allows the
   kernel to launch, but the quick rewrites tested so far are not numerically
   valid:
   - Reusing `tmp_shared_1_2` for the db transpose/reduction launches but
     corrupts all gradients.
   - A direct `dim=0` register reduction fails TileLang layout inference.
+  - A manual per-column fragment accumulation also fails TileLang layout
+    inference because the inner loop variable appears in the inferred thread
+    mapping.
   - A 16x64 swizzled tile and a 64x16 linear tile both launch but corrupt
     gradients and emit layout/bounds warnings.
 
 The safest next backward direction is a deliberate reschedule of the db
 transpose/reduction or a split backward kernel, not another opportunistic shared
 buffer reuse.
+
+Follow-up output-kernel experiment on B200:
+
+- Changing the experimental TileLang output-only kernel from `T.gemm_v1` to
+  generic `T.gemm` stayed correctness-valid but was not a speed win. For
+  `B=1, T=8192, H=16, K=V=128` with `output_h=True`, the full path measured
+  about `0.431 ms` with the opt-in TileLang output kernel versus about
+  `0.423 ms` with the default FLA output-only step. The change was reverted.
 
 ## Blackwell Architecture Direction
 
