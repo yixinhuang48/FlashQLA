@@ -208,10 +208,12 @@ Component timing for `B=1, T=8192, H=16, K=V=128`:
 | Component | ms |
 | --- | ---: |
 | QLA cumsum | 0.008 |
-| QLA KKT solve | 0.035 |
+| QLA KKT solve after generic `T.gemm` | 0.037 |
 | QLA state + `v_new` after generic `T.gemm` | ~0.31 |
 | TileLang output-only | 0.075 |
 | FLA output-only | 0.072 |
+| QLA `prepare_h` after generic `T.gemm` | 0.460 |
+| Previous explicit `T.gemm_v1` `prepare_h` | 0.767 |
 
 This shows the next major kernel target is not output-only anymore; it is the
 QLA state/`v_new` section of `fused_gdr_fwd`. A direct attempt to conditionally
@@ -221,6 +223,14 @@ state+`v_new` prototype, both hit TileLang layout inference limits
 dedicated state+`v_new` kernel written around a compiler-friendly layout instead
 of mutating the Hopper fused layout.
 
+The same generic-GEMM update was extended to `prepare_h`, where it gives a
+clear isolated speedup for the state-recompute kernel used by backward/CP
+warmup. KKT solve also now uses generic `T.gemm`; that change is correctness
+valid but essentially neutral in latency (`0.0372 ms` default versus
+`0.0373 ms` forced v1). A full backward smoke currently compiles through
+`prepare_h` but fails later launching `fused_bwd` with a dynamic shared-memory
+limit (`233984` bytes), so backward needs a separate Blackwell resource pass.
+
 ## Blackwell Architecture Direction
 
-TileLang 0.1.8 is already targeting `sm_100a`, and it exposes Blackwell `tcgen05` primitives. FlashQLA, however, is written around `T.gemm_v1` calls in the Hopper backend. The likely path to significant B200 speedup over the H200 reference is not another host-side heuristic; it is a real forward-kernel port that replaces the Hopper WGMMA-style GEMM use with a Blackwell-aware `tcgen05`/new TileLang GEMM path and revalidates numerics from the reference tests.
+TileLang 0.1.8 is already targeting `sm_100a`, and it exposes Blackwell `tcgen05` primitives. FlashQLA originally pinned the Hopper backend to `T.gemm_v1`; the current branch now lets TileLang select the generic GEMM lowering in the correctness-safe forward and `prepare_h` paths. The likely path to more B200 speedup over the H200 reference is still not another host-side heuristic; it is a real forward-kernel port that removes unused output work and eventually replaces the Hopper WGMMA-style schedule with a Blackwell-aware `tcgen05`/new TileLang GEMM layout while revalidating numerics from the reference tests.

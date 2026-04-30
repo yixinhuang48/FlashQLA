@@ -186,7 +186,7 @@ def tilelang_prepare_h(
                     # [STAGE = i_s % num_stages] 2
                     T.barrier_wait(bar_2, i_s % 2)
                     # S += X^T @ Y
-                    T.gemm_v1(
+                    T.gemm(
                         x_shared,
                         y_shared,
                         h_fragment,
@@ -223,7 +223,7 @@ def tilelang_prepare_h(
                     # [STAGE = i_s % num_stages] 0
                     T.barrier_wait(bar_0, i_s % 2)
                     # X = A^T @ K
-                    T.gemm_v1(
+                    T.gemm(
                         a_shared[i_s % num_stages, :, :],
                         k_shared[i_s % num_stages, :, :],
                         x_fragment,
@@ -248,7 +248,7 @@ def tilelang_prepare_h(
                         # [STAGE = i_s % num_stages] 3
                         T.barrier_wait(bar_3, i_s % 2)
                         # Z = K @ M
-                        T.gemm_v1(
+                        T.gemm(
                             k_shared[i_s % num_stages, :, :],
                             m_shared_R,
                             z_fragment_R,
@@ -257,7 +257,7 @@ def tilelang_prepare_h(
                         # S4[2] Z
                         T.copy(z_fragment_R, z_shared_R)
                         # M += X^T @ Z
-                        T.gemm_v1(
+                        T.gemm(
                             x_shared,
                             z_shared_R,
                             m_fragment_R,
@@ -307,7 +307,7 @@ def tilelang_prepare_h(
                     # [STAGE = i_s % num_stages] 1
                     T.barrier_wait(bar_1, i_s % 2)
                     # U = K @ S
-                    T.gemm_v1(
+                    T.gemm(
                         k_shared[i_s % num_stages, :, :],
                         h_shared,
                         y_fragment,
@@ -333,7 +333,7 @@ def tilelang_prepare_h(
                         # [STAGE = i_s % num_stages] 3
                         T.barrier_wait(bar_3, i_s % 2)
                         # Z = K @ M
-                        T.gemm_v1(
+                        T.gemm(
                             k_shared[i_s % num_stages, :, :],
                             m_shared_L,
                             z_fragment_L,
@@ -342,7 +342,7 @@ def tilelang_prepare_h(
                         # S4[2] Z
                         T.copy(z_fragment_L, z_shared_L)
                         # M += X^T @ Z
-                        T.gemm_v1(
+                        T.gemm(
                             x_shared,
                             z_shared_L,
                             m_fragment_L,
