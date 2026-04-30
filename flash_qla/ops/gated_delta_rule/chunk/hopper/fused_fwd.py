@@ -1,3 +1,5 @@
+import os
+
 import torch
 import tilelang
 import tilelang.language as T
@@ -597,13 +599,17 @@ def fused_gdr_fwd(
         )
     o = torch.empty_like(v)
 
-    grid_size = real_batch_size * H
-    if grid_size >= TARGET_NUM_CTAS:
-        block_DV = 128
-    elif grid_size * 2 >= TARGET_NUM_CTAS:
-        block_DV = 64
+    block_dv_override = os.getenv("FLASHQLA_BLOCK_DV")
+    if block_dv_override is not None:
+        block_DV = int(block_dv_override)
     else:
-        block_DV = 32
+        grid_size = real_batch_size * H
+        if grid_size >= TARGET_NUM_CTAS:
+            block_DV = 128
+        elif grid_size * 2 >= TARGET_NUM_CTAS:
+            block_DV = 64
+        else:
+            block_DV = 32
 
     tilelang_fused_chunk_gdr_fwd_kernel = tilelang_fused_chunk_gdr_fwd(
         H,

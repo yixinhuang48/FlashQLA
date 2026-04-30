@@ -7,10 +7,10 @@ import tilelang
 from flash_qla.utils import l2norm
 from flash_qla.ops.utils import chunk_local_cumsum, group_reduce_vector
 
-if tilelang.contrib.nvcc.get_target_compute_version() == "9.0":
+if float(tilelang.contrib.nvcc.get_target_compute_version()) >= 9.0:
     from .hopper import fused_gdr_fwd, fused_gdr_bwd, fused_gdr_h, kkt_solve
 else:
-    raise ValueError("FlashQLA now support sm90 only.")
+    raise ValueError("FlashQLA now supports sm90 or above only.")
 from .cp_context import intra_card_cp_preprocess
 
 
@@ -33,6 +33,8 @@ def chunk_gated_delta_rule_fwd(
         b=beta,
         cu_seqlens=cu_seqlens,
     )
+    cp_seq_map = None
+    raw_cu_seqlens = None
     if auto_cp:
         initial_state, cu_seqlens, cp_seq_map, raw_cu_seqlens = (
             intra_card_cp_preprocess(

@@ -2,19 +2,22 @@
 # Licensed under The MIT License [see LICENSE for details]
 
 import math
+import os
 
 import torch
 import tilelang
 
 from flash_qla.utils import tensor_cache
 
-if tilelang.contrib.nvcc.get_target_compute_version() == "9.0":
+if float(tilelang.contrib.nvcc.get_target_compute_version()) >= 9.0:
     from .hopper import get_warmup_chunks, fused_gdr_h, correct_initial_states
 else:
-    raise ValueError("FlashQLA now support sm90 only.")
+    raise ValueError("FlashQLA now supports sm90 or above only.")
 
 
-MULTI_PROCESSOR_COUNT = torch.cuda.get_device_properties().multi_processor_count
+DEVICE_PROPERTIES = torch.cuda.get_device_properties()
+MULTI_PROCESSOR_COUNT = DEVICE_PROPERTIES.multi_processor_count
+IS_BLACKWELL_OR_NEWER = DEVICE_PROPERTIES.major >= 10
 
 
 @tensor_cache
@@ -49,8 +52,15 @@ def _calc_cp_seqs(
     # Minimizing T yields the theoretical optimum: L_cp* ∝ √(B·H·Lc / P), where P = MULTI_PROCESSOR_COUNT, L_cp = max_local_chunks
     # Scaled by empirical factor (3) and aligned to the nearest power of 2 for optimal SM scheduling & memory alignment.
 
+    cp_scale_override = os.getenv("FLASHQLA_BLACKWELL_CP_SCALE")
+    if cp_scale_override is not None:
+        cp_scale = float(cp_scale_override)
+    elif IS_BLACKWELL_OR_NEWER and H >= 16:
+        cp_scale = 1.5
+    else:
+        cp_scale = 3
     max_local_chunks = 2 ** round(
-        math.log2(math.sqrt(H * sum(num_chunks) / MULTI_PROCESSOR_COUNT) * 3)
+        math.log2(math.sqrt(H * sum(num_chunks) / MULTI_PROCESSOR_COUNT) * cp_scale)
     )
 
     # Set min to 4 to ensure multi-stage pipelining in fused_gdr;
@@ -85,6 +95,8 @@ def _calc_cp_seqs(
 
     Be = sum(num_chunks) / max(num_chunks)
     use_cp = Be * H <= 40 or (Be * H <= 56 and max(num_chunks) >= 128)
+    if os.getenv("FLASHQLA_FORCE_CP") in ("1", "true", "True", "yes", "on"):
+        use_cp = True
 
     if use_cp:
         cp_cu_seqlens = torch.tensor(
