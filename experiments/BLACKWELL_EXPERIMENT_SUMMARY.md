@@ -165,13 +165,18 @@ Representative B200 microbenchmark for `B=1, T=8192, H=16, K=V=128`:
 
 | Path | ms |
 | --- | ---: |
-| QLA `output_h=True` with QLA `v_new` + output-only kernel | 0.827 |
+| QLA `output_h=True` with QLA `v_new` + output-only kernel | 0.421 |
+| Previous explicit `T.gemm_v1` fused path | 0.827 |
 | QLA/FLA fast `output_h=False` path | 0.362 |
 | FLA full forward | 0.362 |
 
-This is not a final speedup yet, but it is a cleaner decomposition for the next
-kernel port: replace only the output-only step with a Blackwell/TileLang kernel,
-while preserving the already-correct QLA state generation.
+The main improvement came from changing the Hopper fused forward body to call
+TileLang's generic `T.gemm` rather than pinning every GEMM to `T.gemm_v1`.
+Correctness remains valid on fixed, fragmented-varlen, and 32k long-context
+Blackwell smoke tests. The generic call still warns that auto warp
+specialization is disabled when TMA and mbarrier are both present, so this is
+not a full Blackwell-native tcgen05 port, but it removes a large avoidable
+slowdown in the correctness-safe `output_h=True` path.
 
 An experimental fixed-length TileLang output-only kernel has been added behind
 `FLASHQLA_BLACKWELL_TILELANG_OUTPUT=1`. It consumes QLA `h + v_new` directly and
@@ -179,10 +184,10 @@ matches the correctness gate (`o_qla: 0.0015 / 0.3597` on `blackwell_smoke`),
 but it is not enabled by default because the first simple implementation is
 still slower than FLA's Triton output-only kernel:
 
-| Output-only route for QLA `output_h=True` | ms |
+| Full QLA `output_h=True` path | ms |
 | --- | ---: |
-| FLA `chunk_fwd_o` default | 0.829 |
-| Experimental TileLang output kernel | 0.833 |
+| FLA `chunk_fwd_o` output step | 0.421 |
+| Experimental TileLang output step | ~0.42-0.43 |
 
 The first TileLang output kernel is correctness-valid and near the FLA
 output-only fallback for this case. Tuning `block_DV` showed `128` remains best
@@ -204,15 +209,17 @@ Component timing for `B=1, T=8192, H=16, K=V=128`:
 | --- | ---: |
 | QLA cumsum | 0.008 |
 | QLA KKT solve | 0.035 |
-| QLA state + `v_new` | 0.729 |
+| QLA state + `v_new` after generic `T.gemm` | ~0.31 |
 | TileLang output-only | 0.075 |
 | FLA output-only | 0.072 |
 
 This shows the next major kernel target is not output-only anymore; it is the
 QLA state/`v_new` section of `fused_gdr_fwd`. A direct attempt to conditionally
-skip the unused output math inside that fused kernel hit TileLang layout
-inference limits, so the cleaner next step is a dedicated state+`v_new` kernel
-for the Blackwell safe path.
+skip the unused output math inside that fused kernel, and a follow-up standalone
+state+`v_new` prototype, both hit TileLang layout inference limits
+(`Forward indices size 4 != OutputShape size 3`). The next cleaner step is a
+dedicated state+`v_new` kernel written around a compiler-friendly layout instead
+of mutating the Hopper fused layout.
 
 ## Blackwell Architecture Direction
 
